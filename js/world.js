@@ -7,6 +7,7 @@
 import { createBean, SpriteBank } from './beans.js';
 import { Physics, MAX_LAYER, wake } from './physics.js';
 import { makeRng, shuffle, clamp, TAU } from './util.js';
+import { rarityOf } from './beandex.js';
 
 const STEP = 1 / 120;          // fixed physics step
 const MAX_STEPS = 4;
@@ -56,6 +57,7 @@ export class World {
     for (let i = 0; i < opts.count; i++) keys.push(opts.colors[i % opts.colors.length]);
     shuffle(keys, this.rng);
     for (const k of keys) this.beans.push(createBean(this.nextId++, k, this.rng, this.mods.sizes));
+    this.indexSpecials();
 
     const onTable = this.mods.conveyor ? Math.min(opts.count, this.mods.conveyor.initial) : opts.count;
     this.scatter(this.beans.slice(0, onTable));
@@ -78,7 +80,14 @@ export class World {
       timer: this.rng.range(...m.fan.interval) * 0.6, blade: 0, spin: 0, cfg: m.fan,
     } : null;
     this.tilt = { x: 0, y: 0, tx: 0, ty: 0, phase: 'idle', t: 0, timer: m.tilt ? this.rng.range(14, 22) : Infinity };
-    this.darkness = m.lighting ? m.lighting.darkness : 0;
+    // Lighting: a base gloom plus periodic dim-outs (see updateModifiers).
+    this.darkBase = m.lighting ? (m.lighting.base ?? m.lighting.darkness ?? 0) : 0;
+    this.darkness = this.darkBase;
+    this.darkTarget = this.darkBase;
+    this.darkTimer = m.lighting && m.lighting.interval ? this.rng.range(...m.lighting.interval) * 0.5 : Infinity;
+    this.darkOn = false;
+    this.aftershock = Infinity;
+    this.rollers = [];
     this.shakeTimer = m.shake ? this.rng.range(...m.shake.interval) : Infinity;
     this.shuffleTimer = m.shuffle ? this.rng.range(...m.shuffle.interval) : Infinity;
   }
@@ -134,17 +143,31 @@ export class World {
     }
   }
 
+  /** Keep a short list of rare beans (for sparkles) and warm their sprites. */
+  indexSpecials() {
+    this.specials = [];
+    for (const b of this.beans) if (b.variety) this.addSpecial(b);
+  }
+
+  addSpecial(b) {
+    b.rarity = rarityOf(b.variety);
+    this.sprites.ensure(b.key, b.look);
+    this.specials.push(b);
+  }
+
   /** Add a bean to the belt queue (endless mode). */
   enqueue(key) {
     const b = createBean(this.nextId++, key, this.rng, this.mods.sizes);
     b.state = 'queued';
     this.beans.push(b);
+    if (b.variety) this.addSpecial(b);
     return b;
   }
 
   /** Remove sorted beans from the array (endless mode keeps it bounded). */
   compact() {
     this.beans = this.beans.filter((b) => b.state !== 'sorted');
+    this.specials = this.specials.filter((b) => b.state !== 'sorted');
   }
 
   counts() {
@@ -224,6 +247,37 @@ export class World {
       this.shakeTimer = rng.range(...m.shake.interval);
       this.physics.shake(this.beans, m.shake.strength);
       this.emit('shake', { strength: m.shake.strength });
+      if (m.shake.aftershock && rng.chance(0.6)) this.aftershock = rng.range(0.8, 1.6);
+    }
+    this.aftershock -= dt;
+    if (this.aftershock <= 0) {
+      this.aftershock = Infinity;
+      this.physics.shake(this.beans, m.shake.strength * 0.45);
+      this.emit('shake', { strength: m.shake.strength * 0.45, after: true });
+    }
+
+    // Periodic dim-outs.
+    const lt = m.lighting;
+    if (lt && lt.interval) {
+      this.darkTimer -= dt;
+      if (this.darkTimer <= 0) {
+        this.darkOn = !this.darkOn;
+        this.darkTarget = this.darkOn ? rng.range(...lt.peak) : this.darkBase;
+        this.darkTimer = this.darkOn ? rng.range(...lt.duration) : rng.range(...lt.interval);
+        this.emit('lights', { off: this.darkOn });
+      }
+      this.darkness += (this.darkTarget - this.darkness) * Math.min(1, dt * (this.darkOn ? 1.2 : 2));
+    }
+
+    // "A single bean slowly rolls across the table."
+    for (let i = this.rollers.length - 1; i >= 0; i--) {
+      const r = this.rollers[i];
+      r.t -= dt;
+      const b = r.bean;
+      if (r.t <= 0 || b.state !== 'table') { this.rollers.splice(i, 1); continue; }
+      wake(b);
+      b.vx = r.vx; b.vy = r.vy;
+      b.va = r.spin;
     }
 
     // Tilt: eases into a random direction, holds, then levels out.
@@ -329,12 +383,24 @@ export class World {
     b.vx = vx; b.vy = vy;
     b.z = this.physics.layerAt(this.beans, b.x, b.y, b);
     b.zf = b.z + 1;
+    b.land = 1;          // bounce plays when it settles onto its layer
     wake(b);
     // Nudge neighbours awake so they react to the new arrival.
     this.physics.near(b.x, b.y, (j) => {
       const o = this.beans[j];
       if (o.state === 'table' && Math.abs(o.x - b.x) < 40 && Math.abs(o.y - b.y) < 40) wake(o);
     });
+  }
+
+  /** Pick a resting bean and send it slowly across the table. */
+  rollOne() {
+    const r = this.rect;
+    const cand = this.beans.filter((b) => b.state === 'table' && b.z === 0 && Math.abs(b.x - (r.x + r.w / 2)) < r.w * 0.35);
+    if (!cand.length) return null;
+    const b = cand[Math.floor(this.rng.next() * cand.length)];
+    const dir = b.x < r.x + r.w / 2 ? 1 : -1;
+    this.rollers.push({ bean: b, t: 5, vx: dir * 34, vy: this.rng.range(-6, 6), spin: dir * 2.4 });
+    return b;
   }
 
   /** Serialisable snapshot of bean positions (for resuming a level). */

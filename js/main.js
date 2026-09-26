@@ -4,6 +4,9 @@ import { Game } from './game.js';
 
 function boot() {
   const game = new Game(document.getElementById('world'), document.getElementById('fx'));
+  // A note for anyone who opens the developer console.
+  console.log('%cBEAN SORTER 1000%c\nProfessional Bean Organization Software, v2.0.\nThis console is monitored by the Department of Legume Classification. Please do not sort beans from here.',
+    'font: 900 20px sans-serif; color: #dc5a20', 'font: 12px monospace; color: #7c8781');
   game.showMenu();
 
   let resizeQueued = false;

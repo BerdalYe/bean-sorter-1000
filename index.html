@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>Bean Sorter 1000</title>
-<meta name="description" content="A strangely serious simulator about sorting 1,000 beans by hand.">
+<meta name="description" content="Professional Bean Organization Software. A strangely serious simulator about sorting 1,000 beans by hand.">
+<meta name="theme-color" content="#1c2521">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Big+Shoulders+Stencil+Display:wght@700;900&family=Martian+Mono:wght@400;600&display=swap">
@@ -21,8 +22,8 @@
       <div class="readouts">
         <div class="ro ro-wide"><span class="ro-k" id="ro-remaining-k">Beans remaining</span><span class="ro-v" id="ro-remaining">0 / 0</span></div>
         <div class="ro"><span class="ro-k">Accuracy</span><span class="ro-v" id="ro-acc">100.0%</span></div>
-        <div class="ro"><span class="ro-k">Streak</span><span class="ro-v" id="ro-streak">0</span></div>
-        <div class="ro"><span class="ro-k">Best streak</span><span class="ro-v" id="ro-best">0</span></div>
+        <div class="ro ro-streak"><span class="ro-k">Streak <em id="ro-best">Best 0</em></span><span class="ro-v" id="ro-streak">0</span></div>
+        <div class="ro ro-bpm"><span class="ro-k">Beans / min</span><span class="ro-v" id="ro-bpm">0.0</span></div>
         <div class="ro"><span class="ro-k" id="ro-time-k">Time</span><span class="ro-v" id="ro-time">00:00</span></div>
       </div>
       <div class="hud-tools">
@@ -38,6 +39,8 @@
   <div id="memos" aria-live="polite"></div>
   <div id="combo" aria-live="polite"></div>
   <div id="hint" class="hint" hidden></div>
+  <div id="banner" class="banner" hidden></div>
+  <div id="fps" class="fps" hidden></div>
 
   <div id="tray" hidden><div class="tray-inner" id="bins"></div></div>
 
@@ -46,6 +49,7 @@
   <div id="toasts" aria-live="polite"></div>
   <div id="inspect" class="inspect" hidden></div>
   <div id="finale" class="finale" hidden></div>
+  <div id="intro" class="intro" hidden></div>
   <div id="flash" aria-hidden="true"></div>
   <div id="screens" hidden></div>
 </div>

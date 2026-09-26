@@ -11,16 +11,17 @@ export class Camera {
     this.minZoom = 0.2; this.maxZoom = 5;
     this.w = 1; this.h = 1;          // viewport size (CSS px)
     this.top = 0; this.bottom = 0;   // insets taken by HUD and tray
+    this.right = 0;                  // tray on the side (landscape phones)
     this.shakeT = 0; this.shakeMag = 0;
     this.sx = 0; this.sy = 0;        // current shake offset
     this.bounds = null;
   }
 
-  setViewport(w, h, top, bottom) {
-    this.w = w; this.h = h; this.top = top; this.bottom = bottom;
+  setViewport(w, h, top, bottom, right = 0) {
+    this.w = w; this.h = h; this.top = top; this.bottom = bottom; this.right = right;
   }
 
-  get cx() { return this.w / 2; }
+  get cx() { return (this.w - this.right) / 2; }
   get cy() { return this.top + (this.h - this.top - this.bottom) / 2; }
 
   toScreenX(wx) { return (wx - this.x) * this.zoom + this.cx + this.sx; }
@@ -30,7 +31,7 @@ export class Camera {
 
   /** Zoom that fits `rect` into the usable view, with `pad` CSS px margin. */
   fitZoom(rect, pad = 24) {
-    const uw = Math.max(50, this.w - pad * 2);
+    const uw = Math.max(50, this.w - this.right - pad * 2);
     const uh = Math.max(50, this.h - this.top - this.bottom - pad * 2);
     return Math.min(uw / rect.w, uh / rect.h);
   }

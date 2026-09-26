@@ -92,9 +92,10 @@ export class Physics {
       const b = beans[i];
       if (b.state !== 'table') continue;
 
+      if (b.land < 1) b.land += dt;        // drives the drop-bounce animation
       if (b.zf !== b.z) {
         b.zf += (b.z - b.zf) * Math.min(1, dt * 14);
-        if (Math.abs(b.zf - b.z) < 0.01) b.zf = b.z;
+        if (Math.abs(b.zf - b.z) < 0.01) { b.zf = b.z; b.land = 0; }
       }
 
       let ax = 0, ay = 0;

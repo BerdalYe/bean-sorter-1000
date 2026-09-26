@@ -10,7 +10,8 @@
 // ---------------------------------------------------------------------------
 
 import { MAX_LAYER } from './physics.js';
-import { makeRng, TAU } from './util.js';
+import { TAU } from './util.js';
+import { THEMES, buildTexture } from './themes.js';
 
 function canvasOf(w, h) {
   const c = document.createElement('canvas');
@@ -25,10 +26,20 @@ export class Renderer {
     this.fctx = fx.getContext('2d');
     this.sprites = sprites;
     this.dpr = 1; this.w = 1; this.h = 1;
-    this.tableTex = this.makeTableTexture();
-    this.tablePattern = this.ctx.createPattern(this.tableTex, 'repeat');
     this.hover = null;
-    this.shadows = true;     // turned off by adaptive quality on slow devices
+    this.shadows = true;     // setting / adaptive quality on slow devices
+    this.symbols = null;     // colour-assist glyphs: { colorKey: canvas }
+    this.setTheme('office');
+  }
+
+  /** Switch workstation environment (rebuilds the texture and table cache). */
+  setTheme(id) {
+    if (this.themeId === id) return;
+    this.themeId = id;
+    this.theme = THEMES[id] || THEMES.office;
+    this.tableTex = buildTexture(id);
+    this.tablePattern = this.ctx.createPattern(this.tableTex, 'repeat');
+    this.layer = null;
   }
 
   resize(w, h, dpr) {
@@ -44,34 +55,6 @@ export class Renderer {
     this.layer = null;
   }
 
-  /** Grey-green lab laminate with fine flecks (procedural, tileable). */
-  makeTableTexture() {
-    const S = 512, c = canvasOf(S, S), g = c.getContext('2d');
-    const rng = makeRng(20240926);
-    g.fillStyle = '#c4ccc2';
-    g.fillRect(0, 0, S, S);
-    // Soft mottling
-    for (let i = 0; i < 40; i++) {
-      const x = rng.range(0, S), y = rng.range(0, S), r = rng.range(40, 140);
-      const grd = g.createRadialGradient(x, y, 0, x, y, r);
-      const light = rng.chance(0.5);
-      grd.addColorStop(0, light ? 'rgba(255,255,250,0.05)' : 'rgba(60,76,66,0.045)');
-      grd.addColorStop(1, 'rgba(0,0,0,0)');
-      g.fillStyle = grd;
-      for (const ox of [-S, 0, S]) for (const oy of [-S, 0, S]) {
-        g.save(); g.translate(ox, oy); g.fillRect(x - r, y - r, r * 2, r * 2); g.restore();
-      }
-    }
-    // Flecks
-    const cols = ['rgba(255,255,255,0.55)', 'rgba(70,84,76,0.35)', 'rgba(40,50,44,0.3)', 'rgba(230,236,226,0.6)', 'rgba(120,132,122,0.4)'];
-    for (let i = 0; i < 5200; i++) {
-      g.fillStyle = cols[i % cols.length];
-      const s = rng.range(0.4, 1.4);
-      g.fillRect(rng.range(0, S), rng.range(0, S), s, s * rng.range(0.6, 1.4));
-    }
-    return c;
-  }
-
   // ----------------------------------------------------------------------
   // World canvas
   // ----------------------------------------------------------------------
@@ -82,14 +65,15 @@ export class Renderer {
 
     // Floor: flat colour plus tile seams (a full-screen pattern fill is slow
     // on software-rendered canvases, so this is deliberately simple).
+    const th = this.theme;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#28312d';
+    ctx.fillStyle = th.floor;
     ctx.fillRect(0, 0, this.cw.width, this.cw.height);
     ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * ox, dpr * oy);
     const vx0 = cam.toWorldX(0), vy0 = cam.toWorldY(0);
     const vx1 = cam.toWorldX(cam.w), vy1 = cam.toWorldY(cam.h);
     const T = 240;
-    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+    ctx.strokeStyle = th.floorLine;
     ctx.lineWidth = 3;
     ctx.beginPath();
     for (let x = Math.floor(vx0 / T) * T; x <= vx1; x += T) { ctx.moveTo(x, vy0); ctx.lineTo(x, vy1); }
@@ -108,6 +92,17 @@ export class Renderer {
     } else {
       ctx.setTransform(dpr * z, 0, 0, dpr * z, dpr * ox, dpr * oy);
       this.drawTable(ctx, world, z, dpr * z);
+    }
+
+    // Combo hype: the table edge starts to glow on long streaks.
+    if (opts.energy > 0.01) {
+      const pulse = 0.65 + 0.35 * Math.sin(opts.time * (4 + opts.energy * 6));
+      for (let i = 0; i < 3; i++) {
+        ctx.strokeStyle = `rgba(${th.glow},${(opts.energy * 0.32 * pulse / (i + 1)).toFixed(3)})`;
+        ctx.lineWidth = 4 + i * 7;
+        roundRect(ctx, r.x - 14 - i * 5, r.y - 14 - i * 5, r.w + 28 + i * 10, r.h + 28 + i * 10, 18 + i * 5);
+        ctx.stroke();
+      }
     }
 
     if (world.belt) this.drawBelt(ctx, world);
@@ -134,12 +129,33 @@ export class Renderer {
         if (b.z !== L || (b.state !== 'table' && b.state !== 'belt')) continue;
         if (b.x < minX || b.x > maxX || b.y < minY || b.y > maxY) continue;
         const lift = b.zf * 1.3;
-        if (b === this.hover) this.drawHoverRing(ctx, b, ox + b.x * z, oy + (b.y - lift) * z, z);
-        this.drawBean(ctx, b, ox + b.x * z, oy + (b.y - lift) * z, z * (1 + b.zf * 0.025));
+        const bx = ox + b.x * z, by = oy + (b.y - lift) * z;
+        if (b === this.hover) this.drawHoverRing(ctx, b, bx, by, z);
+        this.drawBean(ctx, b, bx, by, z * (1 + b.zf * 0.025));
+        if (this.symbols && b.wid * z > 9) this.drawGlyph(ctx, b, bx, by, z);
         drawn++;
       }
     }
     this.lastDrawn = drawn;
+
+    // Rare beans twinkle now and then so sharp-eyed players can spot them.
+    const sp = world.specials;
+    if (sp && sp.length) {
+      for (const b of sp) {
+        if ((b.state !== 'table' && b.state !== 'belt') || b.rarity === 'uncommon') continue;
+        const period = b.rarity === 'legendary' ? 1.6 : 3.2;
+        const ph = (opts.time + b.id * 0.37) % period;
+        if (ph > 0.6) continue;
+        const a = Math.sin((ph / 0.6) * Math.PI);
+        const size = (b.rarity === 'legendary' ? 20 : 14) * z * a;
+        if (size < 2) continue;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.globalAlpha = a;
+        const x = ox + (b.x + b.len * 0.22) * z, y = oy + (b.y - b.zf * 1.3 - b.wid * 0.2) * z;
+        ctx.drawImage(this.sprites.sparkle, x - size / 2, y - size / 2, size, size);
+      }
+      ctx.globalAlpha = 1;
+    }
 
     // Lighting (Night Shift): darkness with a pool of light where you work.
     if (world.darkness > 0) {
@@ -167,17 +183,20 @@ export class Renderer {
     roundRect(ctx, r.x - 12, r.y - 12, r.w + 24, r.h + 24, 16);
     ctx.fill();
     ctx.restore();
+    const th = this.theme;
     const band = ctx.createLinearGradient(0, r.y - 12, 0, r.y + r.h + 12);
-    band.addColorStop(0, '#dfe4e0'); band.addColorStop(0.5, '#a7b0ab'); band.addColorStop(1, '#6f7873');
+    band.addColorStop(0, th.rim[0]); band.addColorStop(0.5, th.rim[1]); band.addColorStop(1, th.rim[2]);
     ctx.fillStyle = band;
     roundRect(ctx, r.x - 12, r.y - 12, r.w + 24, r.h + 24, 16);
     ctx.fill();
-    ctx.fillStyle = '#56605b';
+    if (th.rimExtra) th.rimExtra(ctx, r);
+    ctx.fillStyle = th.lip;
     roundRect(ctx, r.x - 3, r.y - 3, r.w + 6, r.h + 6, 7);
     ctx.fill();
     ctx.fillStyle = this.tablePattern;
     roundRect(ctx, r.x, r.y, r.w, r.h, 5);
     ctx.fill();
+    if (th.extra) th.extra(ctx, r);
     this.drawMarkings(ctx, r, z);
     if (world.belt) this.drawBeltFrame(ctx, world, z);
   }
@@ -196,11 +215,11 @@ export class Renderer {
     const want = z * this.dpr;
     const q = Math.pow(2, Math.round(Math.log2(want) * 4) / 4);
     if (ext.w * q > 4096 || ext.h * q > 4096) return null;
-    const key = `${q}|${world.setupId}|${this.dpr}`;
+    const key = `${q}|${world.setupId}|${this.dpr}|${this.themeId}`;
     const now = performance.now();
     if (this.layerZoom !== z) { this.layerZoom = z; this.layerChanged = now; }
     const cached = this.layer;
-    const sameWorld = cached && cached.world === world.setupId;
+    const sameWorld = cached && cached.world === world.setupId && cached.theme === this.themeId;
     if (cached && cached.key === key) return cached;
     if (sameWorld && now - this.layerChanged < 160) return cached;
 
@@ -214,14 +233,15 @@ export class Renderer {
     this.tablePattern = g.createPattern(this.tableTex, 'repeat');
     this.drawTable(g, world, q / this.dpr, q);
     this.tablePattern = keep;
-    this.layer = { canvas: c, ext, key, world: world.setupId };
+    this.layer = { canvas: c, ext, key, world: world.setupId, theme: this.themeId };
     return this.layer;
   }
 
   /** Ruler ticks and station stencils printed on the laminate. */
   drawMarkings(ctx, r, z) {
     ctx.save();
-    ctx.strokeStyle = 'rgba(38,54,46,0.32)';
+    const ink = this.theme.ink;
+    ctx.strokeStyle = `rgba(${ink},0.32)`;
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let x = 0; x <= r.w; x += 10) {
@@ -234,18 +254,18 @@ export class Renderer {
     }
     ctx.stroke();
     if (z > 0.35) {
-      ctx.fillStyle = 'rgba(38,54,46,0.38)';
+      ctx.fillStyle = `rgba(${ink},0.38)`;
       ctx.font = '600 7px "Martian Mono", ui-monospace, monospace';
       ctx.textBaseline = 'top';
       for (let x = 100; x < r.w; x += 100) ctx.fillText(String(x / 10), r.x + x + 2, r.y + 11);
       ctx.font = '800 11px "Archivo", Arial, sans-serif';
-      ctx.fillStyle = 'rgba(38,54,46,0.22)';
+      ctx.fillStyle = `rgba(${ink},0.22)`;
       ctx.textAlign = 'right';
       ctx.textBaseline = 'bottom';
-      ctx.fillText('STATION 07  ·  DEPT. OF LEGUME CLASSIFICATION', r.x + r.w - 14, r.y + r.h - 10);
+      ctx.fillText(this.theme.station, r.x + r.w - 14, r.y + r.h - 10);
     }
     ctx.setLineDash([6, 6]);
-    ctx.strokeStyle = 'rgba(38,54,46,0.14)';
+    ctx.strokeStyle = `rgba(${ink},0.14)`;
     ctx.strokeRect(r.x + 24, r.y + 24, r.w - 48, r.h - 48);
     ctx.restore();
   }
@@ -349,19 +369,38 @@ export class Renderer {
   /** Stamp one bean. (sx, sy) are CSS px; z is CSS px per world unit. */
   drawBean(ctx, b, sx, sy, z) {
     const dpr = this.dpr, S = z * dpr;
-    const spr = this.sprites.sprite(b.key, b.variant, S * b.s);
-    const w = (spr.canvas.width / spr.res) * b.s, h = (spr.canvas.height / spr.res) * b.s;
+    const spr = this.sprites.sprite(b.key, b.variant, S * b.s, b.look);
+    // Drop bounce: a quick damped squash right after the bean lands.
+    let bx = b.sx || 1, by = b.sy || 1;
+    const t = b.land;
+    if (t !== undefined && t < 0.45) {
+      const k = Math.exp(-t * 9) * Math.sin(t * 36) * 0.11;
+      bx *= 1 + k; by *= 1 - k;
+    }
+    const w = (spr.canvas.width / spr.res) * b.s * bx, h = (spr.canvas.height / spr.res) * b.s * by;
     const c = Math.cos(b.a) * S, s = Math.sin(b.a) * S;
     ctx.setTransform(c, s, -s * b.flip, c * b.flip, sx * dpr, sy * dpr);
     ctx.drawImage(spr.canvas, -w / 2, -h / 2, w, h);
+  }
+
+  /** Colour-assist symbol stamped on the bean (upright, so it stays readable). */
+  drawGlyph(ctx, b, sx, sy, z) {
+    const g = this.symbols[b.key];
+    if (!g) return;
+    const size = Math.min(b.wid * 0.8, 16) * z;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.drawImage(g, sx - size / 2, sy - size / 2, size, size);
   }
 
   drawHoverRing(ctx, b, sx, sy, z) {
     const dpr = this.dpr, S = z * dpr;
     const c = Math.cos(b.a) * S, s = Math.sin(b.a) * S;
     ctx.setTransform(c, s, -s, c, sx * dpr, sy * dpr);
-    ctx.fillStyle = 'rgba(255,255,240,0.5)';
-    ctx.beginPath(); ctx.ellipse(0, 0, b.len * 0.64, b.wid * 0.7, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,240,0.28)';
+    ctx.beginPath(); ctx.ellipse(0, 0, b.len * 0.66, b.wid * 0.74, 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 1.4 / z;
+    ctx.stroke();
   }
 
   // ----------------------------------------------------------------------
